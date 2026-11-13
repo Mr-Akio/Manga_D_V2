@@ -1,3 +1,4 @@
+mod cache;
 mod models;
 mod proxy;
 mod scraper_doujinth;
@@ -66,18 +67,42 @@ async fn api_health() -> impl IntoResponse {
 
 async fn miku_latest(Query(pq): Query<PageQuery>) -> Result<Json<models::CatalogResponse>, StatusCode> {
     let page = pq.page.unwrap_or(1).max(1);
-    scraper_miku::get_miku_latest(page)
+    let cache_key = format!("miku:latest:{}", page);
+    if let Some(cached_str) = cache::get_cached(&cache_key).await {
+        if let Ok(res) = serde_json::from_str::<models::CatalogResponse>(&cached_str) {
+            return Ok(Json(res));
+        }
+    }
+
+    let res = scraper_miku::get_miku_latest(page)
         .await
-        .map(Json)
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    if let Ok(json_str) = serde_json::to_string(&res) {
+        cache::set_cached(&cache_key, json_str).await;
+    }
+
+    Ok(Json(res))
 }
 
 async fn miku_featured(Query(pq): Query<PageQuery>) -> Result<Json<models::CatalogResponse>, StatusCode> {
     let page = pq.page.unwrap_or(1).max(1);
-    scraper_miku::get_miku_featured(page)
+    let cache_key = format!("miku:featured:{}", page);
+    if let Some(cached_str) = cache::get_cached(&cache_key).await {
+        if let Ok(res) = serde_json::from_str::<models::CatalogResponse>(&cached_str) {
+            return Ok(Json(res));
+        }
+    }
+
+    let res = scraper_miku::get_miku_featured(page)
         .await
-        .map(Json)
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    if let Ok(json_str) = serde_json::to_string(&res) {
+        cache::set_cached(&cache_key, json_str).await;
+    }
+
+    Ok(Json(res))
 }
 
 async fn miku_random() -> Result<Json<models::RandomResponse>, StatusCode> {
@@ -93,10 +118,22 @@ async fn miku_search(Query(sq): Query<SearchQuery>) -> Result<Json<models::Catal
         return Err(StatusCode::BAD_REQUEST);
     }
     let page = sq.page.unwrap_or(1).max(1);
-    scraper_miku::search_miku(&q, page)
+    let cache_key = format!("miku:search:{}:{}", q, page);
+    if let Some(cached_str) = cache::get_cached(&cache_key).await {
+        if let Ok(res) = serde_json::from_str::<models::CatalogResponse>(&cached_str) {
+            return Ok(Json(res));
+        }
+    }
+
+    let res = scraper_miku::search_miku(&q, page)
         .await
-        .map(Json)
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    if let Ok(json_str) = serde_json::to_string(&res) {
+        cache::set_cached(&cache_key, json_str).await;
+    }
+
+    Ok(Json(res))
 }
 
 async fn miku_tag(
@@ -104,42 +141,102 @@ async fn miku_tag(
     Query(pq): Query<PageQuery>,
 ) -> Result<Json<models::CatalogResponse>, StatusCode> {
     let page = pq.page.unwrap_or(1).max(1);
-    scraper_miku::get_miku_by_tag(&tag_name, page)
+    let cache_key = format!("miku:tag:{}:{}", tag_name, page);
+    if let Some(cached_str) = cache::get_cached(&cache_key).await {
+        if let Ok(res) = serde_json::from_str::<models::CatalogResponse>(&cached_str) {
+            return Ok(Json(res));
+        }
+    }
+
+    let res = scraper_miku::get_miku_by_tag(&tag_name, page)
         .await
-        .map(Json)
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    if let Ok(json_str) = serde_json::to_string(&res) {
+        cache::set_cached(&cache_key, json_str).await;
+    }
+
+    Ok(Json(res))
 }
 
 async fn miku_detail(Path(slug): Path<String>) -> Result<Json<models::DetailResponse>, StatusCode> {
-    scraper_miku::get_miku_detail(&slug)
+    let cache_key = format!("miku:detail:{}", slug);
+    if let Some(cached_str) = cache::get_cached(&cache_key).await {
+        if let Ok(res) = serde_json::from_str::<models::DetailResponse>(&cached_str) {
+            return Ok(Json(res));
+        }
+    }
+
+    let res = scraper_miku::get_miku_detail(&slug)
         .await
-        .map(Json)
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    if let Ok(json_str) = serde_json::to_string(&res) {
+        cache::set_cached(&cache_key, json_str).await;
+    }
+
+    Ok(Json(res))
 }
 
 async fn miku_chapter(Path(chapter_id): Path<String>) -> Result<Json<models::ChapterImagesResponse>, StatusCode> {
-    scraper_miku::get_miku_chapter_images(&chapter_id)
+    let cache_key = format!("miku:chapter:{}", chapter_id);
+    if let Some(cached_str) = cache::get_cached(&cache_key).await {
+        if let Ok(res) = serde_json::from_str::<models::ChapterImagesResponse>(&cached_str) {
+            return Ok(Json(res));
+        }
+    }
+
+    let res = scraper_miku::get_miku_chapter_images(&chapter_id)
         .await
-        .map(Json)
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    if let Ok(json_str) = serde_json::to_string(&res) {
+        cache::set_cached(&cache_key, json_str).await;
+    }
+
+    Ok(Json(res))
 }
 
 // ================= DOUJIN-TH HANDLERS =================
 
 async fn doujinth_latest(Query(pq): Query<PageQuery>) -> Result<Json<models::CatalogResponse>, StatusCode> {
     let page = pq.page.unwrap_or(1).max(1);
-    scraper_doujinth::get_doujinth_latest(page)
+    let cache_key = format!("doujinth:latest:{}", page);
+    if let Some(cached_str) = cache::get_cached(&cache_key).await {
+        if let Ok(res) = serde_json::from_str::<models::CatalogResponse>(&cached_str) {
+            return Ok(Json(res));
+        }
+    }
+
+    let res = scraper_doujinth::get_doujinth_latest(page)
         .await
-        .map(Json)
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    if let Ok(json_str) = serde_json::to_string(&res) {
+        cache::set_cached(&cache_key, json_str).await;
+    }
+
+    Ok(Json(res))
 }
 
 async fn doujinth_featured(Query(pq): Query<PageQuery>) -> Result<Json<models::CatalogResponse>, StatusCode> {
     let page = pq.page.unwrap_or(1).max(1);
-    scraper_doujinth::get_doujinth_featured(page)
+    let cache_key = format!("doujinth:featured:{}", page);
+    if let Some(cached_str) = cache::get_cached(&cache_key).await {
+        if let Ok(res) = serde_json::from_str::<models::CatalogResponse>(&cached_str) {
+            return Ok(Json(res));
+        }
+    }
+
+    let res = scraper_doujinth::get_doujinth_featured(page)
         .await
-        .map(Json)
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    if let Ok(json_str) = serde_json::to_string(&res) {
+        cache::set_cached(&cache_key, json_str).await;
+    }
+
+    Ok(Json(res))
 }
 
 async fn doujinth_random() -> Result<Json<models::RandomResponse>, StatusCode> {
@@ -155,10 +252,22 @@ async fn doujinth_search(Query(sq): Query<SearchQuery>) -> Result<Json<models::C
         return Err(StatusCode::BAD_REQUEST);
     }
     let page = sq.page.unwrap_or(1).max(1);
-    scraper_doujinth::search_doujinth(&q, page)
+    let cache_key = format!("doujinth:search:{}:{}", q, page);
+    if let Some(cached_str) = cache::get_cached(&cache_key).await {
+        if let Ok(res) = serde_json::from_str::<models::CatalogResponse>(&cached_str) {
+            return Ok(Json(res));
+        }
+    }
+
+    let res = scraper_doujinth::search_doujinth(&q, page)
         .await
-        .map(Json)
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    if let Ok(json_str) = serde_json::to_string(&res) {
+        cache::set_cached(&cache_key, json_str).await;
+    }
+
+    Ok(Json(res))
 }
 
 async fn doujinth_tag(
@@ -166,24 +275,60 @@ async fn doujinth_tag(
     Query(pq): Query<PageQuery>,
 ) -> Result<Json<models::CatalogResponse>, StatusCode> {
     let page = pq.page.unwrap_or(1).max(1);
-    scraper_doujinth::search_doujinth(&tag_name, page)
+    let cache_key = format!("doujinth:tag:{}:{}", tag_name, page);
+    if let Some(cached_str) = cache::get_cached(&cache_key).await {
+        if let Ok(res) = serde_json::from_str::<models::CatalogResponse>(&cached_str) {
+            return Ok(Json(res));
+        }
+    }
+
+    let res = scraper_doujinth::search_doujinth(&tag_name, page)
         .await
-        .map(Json)
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    if let Ok(json_str) = serde_json::to_string(&res) {
+        cache::set_cached(&cache_key, json_str).await;
+    }
+
+    Ok(Json(res))
 }
 
 async fn doujinth_detail(Path(topic_id): Path<String>) -> Result<Json<models::DetailResponse>, StatusCode> {
-    scraper_doujinth::get_doujinth_detail(&topic_id)
+    let cache_key = format!("doujinth:detail:{}", topic_id);
+    if let Some(cached_str) = cache::get_cached(&cache_key).await {
+        if let Ok(res) = serde_json::from_str::<models::DetailResponse>(&cached_str) {
+            return Ok(Json(res));
+        }
+    }
+
+    let res = scraper_doujinth::get_doujinth_detail(&topic_id)
         .await
-        .map(Json)
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    if let Ok(json_str) = serde_json::to_string(&res) {
+        cache::set_cached(&cache_key, json_str).await;
+    }
+
+    Ok(Json(res))
 }
 
 async fn doujinth_chapter(Path(topic_id): Path<String>) -> Result<Json<models::ChapterImagesResponse>, StatusCode> {
-    scraper_doujinth::get_doujinth_chapter_images(&topic_id)
+    let cache_key = format!("doujinth:chapter:{}", topic_id);
+    if let Some(cached_str) = cache::get_cached(&cache_key).await {
+        if let Ok(res) = serde_json::from_str::<models::ChapterImagesResponse>(&cached_str) {
+            return Ok(Json(res));
+        }
+    }
+
+    let res = scraper_doujinth::get_doujinth_chapter_images(&topic_id)
         .await
-        .map(Json)
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    if let Ok(json_str) = serde_json::to_string(&res) {
+        cache::set_cached(&cache_key, json_str).await;
+    }
+
+    Ok(Json(res))
 }
 
 // ================= MAIN FUNCTION =================

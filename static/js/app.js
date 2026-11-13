@@ -2,6 +2,8 @@
  * MangaVerse - Dual Manga Scraper & Zero-Seam Continuous Webtoon Engine
  */
 
+const clientCache = new Map();
+
 const state = {
     currentSource: 'miku', // 'miku' | 'doujinth'
     currentPage: 1,
@@ -267,22 +269,41 @@ async function fetchCatalog(page = 1) {
     
     updateCatalogHeader();
 
-    const timestamp = Date.now();
     let endpoint = '';
+    let cacheKey = null;
     if (state.currentTag) {
-        endpoint = `/api/${state.currentSource}/tag/${encodeURIComponent(state.currentTag)}?page=${page}&_t=${timestamp}`;
+        endpoint = `/api/${state.currentSource}/tag/${encodeURIComponent(state.currentTag)}?page=${page}`;
+        cacheKey = `${state.currentSource}:tag:${state.currentTag}:${page}`;
     } else if (state.searchQuery) {
-        endpoint = `/api/${state.currentSource}/search?q=${encodeURIComponent(state.searchQuery)}&page=${page}&_t=${timestamp}`;
+        endpoint = `/api/${state.currentSource}/search?q=${encodeURIComponent(state.searchQuery)}&page=${page}`;
+        cacheKey = `${state.currentSource}:search:${state.searchQuery}:${page}`;
     } else if (state.viewMode === 'featured') {
-        endpoint = `/api/${state.currentSource}/featured?page=${page}&_t=${timestamp}`;
+        endpoint = `/api/${state.currentSource}/featured?page=${page}`;
+        cacheKey = `${state.currentSource}:featured:${page}`;
     } else if (state.viewMode === 'random') {
-        endpoint = `/api/${state.currentSource}/random?batch=${state.randomBatch || 1}&_t=${timestamp}`;
+        endpoint = `/api/${state.currentSource}/random?batch=${state.randomBatch || 1}&_t=${Date.now()}`;
+        cacheKey = null;
     } else {
-        endpoint = `/api/${state.currentSource}/latest?page=${page}&_t=${timestamp}`;
+        endpoint = `/api/${state.currentSource}/latest?page=${page}`;
+        cacheKey = `${state.currentSource}:latest:${page}`;
     }
 
     // Always keep paginationBar visible so user can paginate or reroll
     if (paginationBar) paginationBar.classList.remove('hidden');
+
+    // Instant client-side cache return (0 ms UI response)
+    if (cacheKey && clientCache.has(cacheKey)) {
+        const cached = clientCache.get(cacheKey);
+        if (Date.now() - cached.time < 180000) { // 3 minutes cache
+            skeleton.classList.add('hidden');
+            const items = cached.data.items || [];
+            if (items.length > 0) {
+                renderMangaCards(items);
+                updatePaginationControls(cached.data);
+                return;
+            }
+        }
+    }
 
     try {
         const res = await fetch(endpoint);
@@ -303,45 +324,13 @@ async function fetchCatalog(page = 1) {
 
         renderMangaCards(items);
 
-        // Update Pagination Controls
-        if (state.viewMode === 'random') {
-            // Random Mode: Prev is disabled, Next rolls a new batch
-            if (prevBtn) {
-                prevBtn.disabled = true;
-                prevBtn.classList.add('opacity-40', 'cursor-not-allowed');
-            }
-            if (currPageDisplay) {
-                currPageDisplay.innerHTML = `<i class="fa-solid fa-dice mr-1 text-purple-400"></i> สุ่มชุดที่ ${state.randomBatch || 1}`;
-            }
-            if (nextPageBtn) {
-                nextPageBtn.disabled = false;
-                nextPageBtn.classList.remove('opacity-40', 'cursor-not-allowed');
-                nextPageBtn.innerHTML = `สุ่มชุดถัดไป <i class="fa-solid fa-rotate-right ml-1"></i>`;
-            }
-        } else {
-            // Normal / Featured / Search Mode
-            if (prevBtn) {
-                prevBtn.disabled = page <= 1;
-                if (page <= 1) {
-                    prevBtn.classList.add('opacity-40', 'cursor-not-allowed');
-                } else {
-                    prevBtn.classList.remove('opacity-40', 'cursor-not-allowed');
-                }
-            }
-            if (currPageDisplay) {
-                currPageDisplay.textContent = `หน้า ${page}`;
-            }
-            if (nextPageBtn) {
-                const hasNext = data.has_next !== false;
-                nextPageBtn.disabled = !hasNext;
-                nextPageBtn.innerHTML = `ถัดไป <i class="fa-solid fa-chevron-right ml-1"></i>`;
-                if (!hasNext) {
-                    nextPageBtn.classList.add('opacity-40', 'cursor-not-allowed');
-                } else {
-                    nextPageBtn.classList.remove('opacity-40', 'cursor-not-allowed');
-                }
-            }
+        // Save into instant client-side cache
+        if (cacheKey && items.length > 0) {
+            clientCache.set(cacheKey, { time: Date.now(), data });
         }
+
+        // Update Pagination Controls
+        updatePaginationControls(data, page);
 
         // Auto-scroll to top of catalog when paginating
         if (page > 1 || (state.viewMode === 'random' && (state.randomBatch || 1) > 1)) {
@@ -362,6 +351,49 @@ async function fetchCatalog(page = 1) {
     }
 }
 
+function updatePaginationControls(data, page = state.currentPage) {
+    const currPageDisplay = document.getElementById('currentPageDisplay');
+    const prevBtn = document.getElementById('prevPageBtn');
+    const nextPageBtn = document.getElementById('nextPageBtn');
+
+    if (state.viewMode === 'random') {
+        if (prevBtn) {
+            prevBtn.disabled = true;
+            prevBtn.classList.add('opacity-40', 'cursor-not-allowed');
+        }
+        if (currPageDisplay) {
+            currPageDisplay.innerHTML = `<i class="fa-solid fa-dice mr-1 text-purple-400"></i> สุ่มชุดที่ ${state.randomBatch || 1}`;
+        }
+        if (nextPageBtn) {
+            nextPageBtn.disabled = false;
+            nextPageBtn.classList.remove('opacity-40', 'cursor-not-allowed');
+            nextPageBtn.innerHTML = `สุ่มชุดถัดไป <i class="fa-solid fa-rotate-right ml-1"></i>`;
+        }
+    } else {
+        if (prevBtn) {
+            prevBtn.disabled = page <= 1;
+            if (page <= 1) {
+                prevBtn.classList.add('opacity-40', 'cursor-not-allowed');
+            } else {
+                prevBtn.classList.remove('opacity-40', 'cursor-not-allowed');
+            }
+        }
+        if (currPageDisplay) {
+            currPageDisplay.textContent = `หน้า ${page}`;
+        }
+        if (nextPageBtn) {
+            const hasNext = data.has_next !== false;
+            nextPageBtn.disabled = !hasNext;
+            nextPageBtn.innerHTML = `ถัดไป <i class="fa-solid fa-chevron-right ml-1"></i>`;
+            if (!hasNext) {
+                nextPageBtn.classList.add('opacity-40', 'cursor-not-allowed');
+            } else {
+                nextPageBtn.classList.remove('opacity-40', 'cursor-not-allowed');
+            }
+        }
+    }
+}
+
 function renderMangaCards(items) {
     const grid = document.getElementById('mangaGrid');
     grid.innerHTML = items.map(item => {
@@ -371,16 +403,9 @@ function renderMangaCards(items) {
             : 'bg-amber-500/90 text-black';
         const sourceLabel = item.source === 'miku' ? 'Miku' : 'TH';
         
-        // Proxy image for hotlink and CORS protection
-        const proxiedThumb = !item.thumbnail 
-            ? 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="300" height="400" viewBox="0 0 300 400"><rect width="300" height="400" fill="%231a1b26"/><text x="50%" y="50%" fill="%23666" text-anchor="middle" font-family="sans-serif" font-size="16">ไม่มีรูปภาพ</text></svg>'
-            : (item.source === 'miku' || !item.thumbnail.includes('hentaithai.net'))
-                ? item.thumbnail
-                : `/api/proxy-image?url=${encodeURIComponent(item.thumbnail)}&source=${item.source}`;
-
-        const proxiedOverlay = item.thumbnail_overlay
-            ? `/api/proxy-image?url=${encodeURIComponent(item.thumbnail_overlay)}&source=${item.source}`
-            : null;
+        // Direct Lightning CDN load with no-referrer
+        const directThumb = item.thumbnail || 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="300" height="400" viewBox="0 0 300 400"><rect width="300" height="400" fill="%231a1b26"/><text x="50%" y="50%" fill="%23666" text-anchor="middle" font-family="sans-serif" font-size="16">ไม่มีรูปภาพ</text></svg>';
+        const directOverlay = item.thumbnail_overlay || null;
 
         return `
             <div onclick="openMangaDetail('${item.id}')" 
@@ -388,19 +413,21 @@ function renderMangaCards(items) {
                 
                 <!-- Poster Image Container -->
                 <div class="aspect-[3/4] w-full relative bg-gray-900 overflow-hidden">
-                    <img src="${proxiedThumb}" 
+                    <img src="${directThumb}" 
                          alt="${escapeHtml(item.title)}" 
+                         referrerpolicy="no-referrer"
                          loading="lazy" 
                          decoding="async"
                          class="w-full h-full object-cover transition-transform duration-300 group-hover:scale-105"
-                         onerror="this.onerror=null; this.src='${item.thumbnail || ''}';">
+                         onerror="if(!this.dataset.retried && '${item.thumbnail || ''}'){ this.dataset.retried='1'; this.src='/api/proxy-image?url=' + encodeURIComponent('${item.thumbnail}') + '&source=${item.source}'; }">
 
-                    ${proxiedOverlay ? `
-                        <img src="${proxiedOverlay}" 
+                    ${directOverlay ? `
+                        <img src="${directOverlay}" 
                              alt="" 
                              aria-hidden="true" 
+                             referrerpolicy="no-referrer"
                              class="absolute inset-0 w-full h-full object-cover pointer-events-none transition-transform duration-300 group-hover:scale-105"
-                             onerror="this.style.display='none';">
+                             onerror="if(!this.dataset.retried){ this.dataset.retried='1'; this.src='/api/proxy-image?url=' + encodeURIComponent('${directOverlay}') + '&source=${item.source}'; } else { this.style.display='none'; }">
                     ` : ''}
 
                     <!-- Badges -->
@@ -730,17 +757,15 @@ function renderReaderImages(images) {
         img.alt = `หน้า ${i + 1}`;
         img.loading = (i < 3) ? 'eager' : 'lazy';
         img.decoding = 'async'; // Non-blocking GPU image decoding
+        img.referrerPolicy = 'no-referrer'; // Ultra-fast direct CDN load
+        img.src = baseSrc;
 
-        // Direct load for Miku or external CDN; route Doujin-TH via streaming proxy
-        const proxiedSrc = (state.currentSource === 'miku' || !baseSrc.includes('hentaithai.net'))
-            ? baseSrc
-            : `/api/proxy-image?url=${encodeURIComponent(baseSrc)}&source=${state.currentSource}`;
-        img.src = proxiedSrc;
-
-        // Auto retry fallback
+        // Auto fallback to proxy if direct CDN ever fails
         img.onerror = () => {
-            img.onerror = null;
-            img.src = baseSrc; // Attempt direct load if proxy fails
+            if (!img.dataset.retried) {
+                img.dataset.retried = '1';
+                img.src = `/api/proxy-image?url=${encodeURIComponent(baseSrc)}&source=${state.currentSource}`;
+            }
         };
 
         wrapper.appendChild(img);
@@ -750,11 +775,17 @@ function renderReaderImages(images) {
             const overlayImg = document.createElement('img');
             overlayImg.className = 'hc-layer';
             overlayImg.alt = '';
+            overlayImg.referrerPolicy = 'no-referrer';
             overlayImg.loading = (i < 3) ? 'eager' : 'lazy';
             overlayImg.decoding = 'async';
-            overlayImg.src = `/api/proxy-image?url=${encodeURIComponent(overlaySrc)}&source=${state.currentSource}`;
+            overlayImg.src = overlaySrc;
             overlayImg.onerror = () => {
-                overlayImg.style.display = 'none';
+                if (!overlayImg.dataset.retried) {
+                    overlayImg.dataset.retried = '1';
+                    overlayImg.src = `/api/proxy-image?url=${encodeURIComponent(overlaySrc)}&source=${state.currentSource}`;
+                } else {
+                    overlayImg.style.display = 'none';
+                }
             };
             wrapper.appendChild(overlayImg);
         }
