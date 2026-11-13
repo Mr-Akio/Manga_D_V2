@@ -6,7 +6,23 @@ use axum::{
 };
 use futures_util::TryStreamExt;
 use serde::Deserialize;
+use std::sync::OnceLock;
 use std::time::Duration;
+
+static PROXY_CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
+
+fn get_client() -> &'static reqwest::Client {
+    PROXY_CLIENT.get_or_init(|| {
+        reqwest::Client::builder()
+            .timeout(Duration::from_secs(20))
+            .connect_timeout(Duration::from_secs(10))
+            .pool_idle_timeout(Duration::from_secs(90))
+            .pool_max_idle_per_host(32)
+            .tcp_keepalive(Some(Duration::from_secs(60)))
+            .build()
+            .expect("Failed to initialize proxy reqwest client")
+    })
+}
 
 #[derive(Deserialize)]
 pub struct ProxyQuery {
@@ -31,10 +47,7 @@ pub async fn proxy_image_handler(Query(params): Query<ProxyQuery>) -> Result<Res
         "https://doujin-th.com/"
     };
 
-    let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(20))
-        .build()
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let client = get_client();
 
     let mut req_headers = HeaderMap::new();
     req_headers.insert(
@@ -46,37 +59,45 @@ pub async fn proxy_image_handler(Query(params): Query<ProxyQuery>) -> Result<Res
         header::ACCEPT,
         HeaderValue::from_static("image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8"),
     );
+    req_headers.insert(
+        header::HeaderName::from_static("sec-ch-ua"),
+        HeaderValue::from_static("\"Not A(Brand\";v=\"8\", \"Chromium\";v=\"132\", \"Google Chrome\";v=\"132\""),
+    );
+    req_headers.insert(
+        header::HeaderName::from_static("sec-ch-ua-mobile"),
+        HeaderValue::from_static("?0"),
+    );
+    req_headers.insert(
+        header::HeaderName::from_static("sec-ch-ua-platform"),
+        HeaderValue::from_static("\"Windows\""),
+    );
+    req_headers.insert(
+        header::HeaderName::from_static("sec-fetch-dest"),
+        HeaderValue::from_static("image"),
+    );
+    req_headers.insert(
+        header::HeaderName::from_static("sec-fetch-mode"),
+        HeaderValue::from_static("no-cors"),
+    );
+    req_headers.insert(
+        header::HeaderName::from_static("sec-fetch-site"),
+        HeaderValue::from_static("cross-site"),
+    );
 
-    let res = client
-        .get(&params.url)
-        .headers(req_headers.clone())
-        .send()
-        .await
-        .map_err(|_| StatusCode::BAD_GATEWAY)?;
-
-    let status = res.status();
-    if !status.is_success() {
-        // Fallback retry with alternate referer
-        let alt_referer = if referer == "https://doujin-th.com/" {
-            "https://miku-doujin.com/"
-        } else {
-            "https://doujin-th.com/"
-        };
-        req_headers.insert(header::REFERER, HeaderValue::from_str(alt_referer).unwrap());
-
-        let retry_res = client
-            .get(&params.url)
-            .headers(req_headers)
-            .send()
-            .await
-            .map_err(|_| StatusCode::BAD_GATEWAY)?;
-
-        if !retry_res.status().is_success() {
-            return Err(StatusCode::NOT_FOUND);
+    // Attempt 1
+    let fetch_result = client.get(&params.url).headers(req_headers.clone()).send().await;
+    let res = match fetch_result {
+        Ok(r) if r.status().is_success() => r,
+        _ => {
+            // Short backoff before retry (handles transient connection reset under burst concurrency)
+            tokio::time::sleep(Duration::from_millis(150)).await;
+            match client.get(&params.url).headers(req_headers).send().await {
+                Ok(r) if r.status().is_success() => r,
+                Ok(r) => return Err(StatusCode::from_u16(r.status().as_u16()).unwrap_or(StatusCode::NOT_FOUND)),
+                Err(_) => return Err(StatusCode::BAD_GATEWAY),
+            }
         }
-
-        return build_streaming_response(retry_res).await;
-    }
+    };
 
     build_streaming_response(res).await
 }
@@ -101,7 +122,7 @@ async fn build_streaming_response(res: reqwest::Response) -> Result<Response, St
     );
     headers.insert(
         header::CACHE_CONTROL,
-        HeaderValue::from_static("public, max-age=604800, immutable"),
+        HeaderValue::from_static("public, max-age=2592000, immutable"),
     );
     headers.insert(
         header::ACCESS_CONTROL_ALLOW_ORIGIN,
@@ -110,4 +131,3 @@ async fn build_streaming_response(res: reqwest::Response) -> Result<Response, St
 
     Ok(response)
 }
-

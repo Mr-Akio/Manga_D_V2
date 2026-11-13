@@ -372,9 +372,11 @@ function renderMangaCards(items) {
         const sourceLabel = item.source === 'miku' ? 'Miku' : 'TH';
         
         // Proxy image for hotlink and CORS protection
-        const proxiedThumb = item.thumbnail 
-            ? `/api/proxy-image?url=${encodeURIComponent(item.thumbnail)}&source=${item.source}`
-            : 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="300" height="400" viewBox="0 0 300 400"><rect width="300" height="400" fill="%231a1b26"/><text x="50%" y="50%" fill="%23666" text-anchor="middle" font-family="sans-serif" font-size="16">ไม่มีรูปภาพ</text></svg>';
+        const proxiedThumb = !item.thumbnail 
+            ? 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="300" height="400" viewBox="0 0 300 400"><rect width="300" height="400" fill="%231a1b26"/><text x="50%" y="50%" fill="%23666" text-anchor="middle" font-family="sans-serif" font-size="16">ไม่มีรูปภาพ</text></svg>'
+            : (item.source === 'miku' || !item.thumbnail.includes('hentaithai.net'))
+                ? item.thumbnail
+                : `/api/proxy-image?url=${encodeURIComponent(item.thumbnail)}&source=${item.source}`;
 
         const proxiedOverlay = item.thumbnail_overlay
             ? `/api/proxy-image?url=${encodeURIComponent(item.thumbnail_overlay)}&source=${item.source}`
@@ -729,8 +731,10 @@ function renderReaderImages(images) {
         img.loading = (i < 3) ? 'eager' : 'lazy';
         img.decoding = 'async'; // Non-blocking GPU image decoding
 
-        // Hotlink & CORS Protection: route through streaming proxy
-        const proxiedSrc = `/api/proxy-image?url=${encodeURIComponent(baseSrc)}&source=${state.currentSource}`;
+        // Direct load for Miku or external CDN; route Doujin-TH via streaming proxy
+        const proxiedSrc = (state.currentSource === 'miku' || !baseSrc.includes('hentaithai.net'))
+            ? baseSrc
+            : `/api/proxy-image?url=${encodeURIComponent(baseSrc)}&source=${state.currentSource}`;
         img.src = proxiedSrc;
 
         // Auto retry fallback
@@ -778,8 +782,8 @@ function checkBottomBarVisibility() {
     if (banner && !banner.classList.contains('hidden')) {
         const rect = banner.getBoundingClientRect();
         const vh = window.innerHeight || document.documentElement.clientHeight;
-        // If the top of the banner is within 100px of the viewport or inside it
-        if (rect.top <= vh + 100) {
+        // If the banner is entering viewport or within 150px
+        if (rect.top <= vh + 150 && rect.bottom >= -50) {
             bottomBar.classList.add('reader-bar-hidden-permanent');
             return true;
         }
@@ -822,7 +826,7 @@ function setupIntersectionObserver(totalPages) {
             });
         }, {
             root: document.getElementById('readerView'),
-            rootMargin: '100px 0px 0px 0px', // Trigger 100px before entering viewport
+            rootMargin: '0px 0px 150px 0px', // Trigger 150px before entering bottom of viewport
             threshold: 0
         });
         bannerObserver.observe(banner);
