@@ -214,7 +214,6 @@ function updateSourceButtonsUI(source = state.currentSource) {
         iconBadge.innerHTML = '<i class="fa-solid fa-bolt"></i>';
     }
 }
-}
 
 function updateCatalogHeader() {
     const catalogTitle = document.getElementById('catalogTitle');
