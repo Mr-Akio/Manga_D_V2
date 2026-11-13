@@ -369,19 +369,43 @@ pub async fn get_miku_chapter_images(chapter_id: &str) -> Result<ChapterImagesRe
     let document = Html::parse_document(&html);
 
     let mut images = Vec::new();
-    let content_sel = Selector::parse(".manga-content img").unwrap();
-    for img in document.select(&content_sel) {
+    let mut seen = HashSet::new();
+
+    // 1. Primary selector: #manga-content img (main webtoon vertical scroll container)
+    // Note: miku-doujin.com has both #manga-content and #v-pills-tabContent containing the exact same images.
+    // Querying .manga-content without specifying the container or deduplicating causes all images to duplicate 2x!
+    let main_sel = Selector::parse("#manga-content img").unwrap();
+    for img in document.select(&main_sel) {
         let src = img
             .value()
             .attr("data-src")
             .or_else(|| img.value().attr("src"))
             .unwrap_or("")
             .to_string();
-        if src.contains("uploads/") {
+        if src.contains("uploads/") && !src.contains("thumb") && !seen.contains(&src) {
+            seen.insert(src.clone());
             images.push(ChapterImage::Single(src));
         }
     }
 
+    // 2. Fallback: if #manga-content is missing, search .manga-content img with strict deduplication
+    if images.is_empty() {
+        let content_sel = Selector::parse(".manga-content img").unwrap();
+        for img in document.select(&content_sel) {
+            let src = img
+                .value()
+                .attr("data-src")
+                .or_else(|| img.value().attr("src"))
+                .unwrap_or("")
+                .to_string();
+            if src.contains("uploads/") && !src.contains("thumb") && !seen.contains(&src) {
+                seen.insert(src.clone());
+                images.push(ChapterImage::Single(src));
+            }
+        }
+    }
+
+    // 3. Fallback: all images on page
     if images.is_empty() {
         let img_sel = Selector::parse("img").unwrap();
         for img in document.select(&img_sel) {
@@ -391,7 +415,8 @@ pub async fn get_miku_chapter_images(chapter_id: &str) -> Result<ChapterImagesRe
                 .or_else(|| img.value().attr("src"))
                 .unwrap_or("")
                 .to_string();
-            if src.contains("uploads/") && !src.contains("thumb") {
+            if src.contains("uploads/") && !src.contains("thumb") && !seen.contains(&src) {
+                seen.insert(src.clone());
                 images.push(ChapterImage::Single(src));
             }
         }

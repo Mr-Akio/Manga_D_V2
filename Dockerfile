@@ -15,7 +15,6 @@ RUN rm -rf src
 
 # Copy real source files
 COPY src ./src
-COPY static ./static
 RUN touch src/main.rs && cargo build --release
 
 # Stage 2: Minimal runtime image
