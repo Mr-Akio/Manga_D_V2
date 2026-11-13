@@ -48,9 +48,10 @@ document.addEventListener('DOMContentLoaded', () => {
     loadStoredData();
     updateBookmarkBadge();
     renderPopularTags();
-    fetchCatalog(1);
     setupScrollListeners();
     setupKeyboardListeners();
+    handleRouteFromURL(true);
+    window.addEventListener('popstate', () => handleRouteFromURL(false));
 });
 
 function loadStoredData() {
@@ -189,13 +190,17 @@ function switchSource(source) {
     if (clearBtn) clearBtn.classList.add('hidden');
 
     // Update switcher pill UI
+    updateSourceButtonsUI(source);
+    updateCatalogHeader();
+    updateURL({ source });
+    fetchCatalog(1);
+}
+
+function updateSourceButtonsUI(source = state.currentSource) {
     const btnMiku = document.getElementById('sourceBtnMiku');
     const btnDth = document.getElementById('sourceBtnDth');
-    const catalogTitle = document.getElementById('catalogTitle');
     const iconBadge = document.getElementById('sourceIconBadge');
-
-    const sourceName = source === 'miku' ? 'Miku' : 'Manga-TH';
-    const colorClass = source === 'miku' ? 'text-sky-400' : 'text-amber-400';
+    if (!btnMiku || !btnDth || !iconBadge) return;
 
     if (source === 'miku') {
         btnMiku.className = 'source-btn-miku active px-2.5 sm:px-4 py-1.5 rounded-lg text-xs sm:text-sm font-semibold transition-all duration-200 flex items-center gap-1.5 border border-transparent';
@@ -208,9 +213,7 @@ function switchSource(source) {
         iconBadge.className = 'w-8 h-8 rounded-lg bg-amber-500/20 text-amber-400 border border-amber-500/30 flex items-center justify-center text-sm font-bold';
         iconBadge.innerHTML = '<i class="fa-solid fa-bolt"></i>';
     }
-
-    updateCatalogHeader();
-    fetchCatalog(1);
+}
 }
 
 function updateCatalogHeader() {
@@ -245,6 +248,139 @@ async function randomReadInstant() {
         }
     } catch (err) {
         console.error('Instant random failed:', err);
+    }
+}
+
+// =========================================================
+// URL ROUTING & DEEP-LINKING SYNCHRONIZER
+// =========================================================
+function updateURL(params = {}) {
+    const searchParams = new URLSearchParams();
+
+    const src = params.source || state.currentSource;
+    if (src && src !== 'miku') {
+        searchParams.set('source', src);
+    }
+
+    if (params.manga) {
+        searchParams.set('manga', params.manga);
+        if (params.chapter) {
+            searchParams.set('chapter', params.chapter);
+        }
+    } else {
+        if (state.currentTag) {
+            searchParams.set('tag', state.currentTag);
+        } else if (state.searchQuery) {
+            searchParams.set('q', state.searchQuery);
+        } else if (state.viewMode && state.viewMode !== 'latest') {
+            searchParams.set('view', state.viewMode);
+        }
+        if (state.currentPage && state.currentPage > 1) {
+            searchParams.set('page', state.currentPage);
+        }
+    }
+
+    const newQuery = searchParams.toString();
+    const newPath = newQuery ? `?${newQuery}` : window.location.pathname;
+    
+    if (window.location.search !== (newQuery ? `?${newQuery}` : '')) {
+        window.history.pushState({ ...params, source: src }, '', newPath);
+    }
+}
+
+function handleCardClick(e, mangaId, source) {
+    if (e.metaKey || e.ctrlKey || e.shiftKey || e.which === 2 || e.button === 1) {
+        return; // Native browser opens new tab
+    }
+    e.preventDefault();
+    if (source && source !== state.currentSource) {
+        state.currentSource = source;
+        updateSourceButtonsUI(source);
+    }
+    openMangaDetail(mangaId);
+}
+
+function handleChapterClick(e, idx) {
+    if (e.metaKey || e.ctrlKey || e.shiftKey || e.which === 2 || e.button === 1) {
+        return; // Native browser opens new tab
+    }
+    e.preventDefault();
+    if (document.getElementById('chapterDrawer')) {
+        closeChapterDrawer();
+    }
+    openChapterByIndex(idx);
+}
+
+async function handleRouteFromURL(isInitial = true) {
+    const params = new URLSearchParams(window.location.search);
+    const sourceParam = params.get('source');
+    const mangaParam = params.get('manga');
+    const chapterParam = params.get('chapter');
+    const tagParam = params.get('tag');
+    const qParam = params.get('q');
+    const viewParam = params.get('view');
+    const pageParam = parseInt(params.get('page') || '1', 10);
+
+    if (sourceParam && (sourceParam === 'miku' || sourceParam === 'doujinth')) {
+        state.currentSource = sourceParam;
+        updateSourceButtonsUI(sourceParam);
+    }
+
+    if (tagParam) {
+        state.currentTag = tagParam;
+    } else if (qParam) {
+        state.searchQuery = qParam;
+    } else if (viewParam) {
+        state.viewMode = viewParam;
+    }
+
+    // Direct link to reader chapter (from right click open in new tab or page reload)
+    if (mangaParam && chapterParam) {
+        fetchCatalog(pageParam);
+        await openMangaDetail(mangaParam, false);
+        const chIdx = state.chapters.findIndex(c => String(c.id) === String(chapterParam));
+        const targetIdx = chIdx >= 0 ? chIdx : 0;
+        await openChapterByIndex(targetIdx);
+        return;
+    }
+
+    // Direct link to manga detail modal
+    if (mangaParam) {
+        fetchCatalog(pageParam);
+        openMangaDetail(mangaParam);
+        return;
+    }
+
+    // Handle back button when reader was open
+    const readerView = document.getElementById('readerView');
+    if (readerView && !readerView.classList.contains('hidden')) {
+        readerView.classList.add('hidden');
+        document.body.style.overflow = '';
+    }
+    const detailModal = document.getElementById('detailModal');
+    if (detailModal && !detailModal.classList.contains('hidden')) {
+        detailModal.classList.add('hidden');
+        document.body.style.overflow = '';
+    }
+
+    if (isInitial) {
+        fetchCatalog(pageParam);
+    }
+}
+
+async function reloadCurrentChapter() {
+    if (state.currentChapterIndex !== undefined && state.chapters && state.chapters[state.currentChapterIndex]) {
+        const iconTop = document.getElementById('readerReloadIconTop');
+        const iconBottom = document.getElementById('readerReloadIconBottom');
+        if (iconTop) iconTop.classList.add('fa-spin');
+        if (iconBottom) iconBottom.classList.add('fa-spin');
+
+        await openChapterByIndex(state.currentChapterIndex, true);
+
+        setTimeout(() => {
+            if (iconTop) iconTop.classList.remove('fa-spin');
+            if (iconBottom) iconBottom.classList.remove('fa-spin');
+        }, 500);
     }
 }
 
@@ -394,6 +530,19 @@ function updatePaginationControls(data, page = state.currentPage) {
     }
 }
 
+function getImageUrl(url, source) {
+    if (!url) {
+        return 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="300" height="400" viewBox="0 0 300 400"><rect width="300" height="400" fill="%231a1b26"/><text x="50%" y="50%" fill="%23666" text-anchor="middle" font-family="sans-serif" font-size="16">ไม่มีรูปภาพ</text></svg>';
+    }
+    // Miku CDN images are served over global Cloudflare and load directly & fast
+    if (source === 'miku' && !url.includes('hentaithai.net')) {
+        return url;
+    }
+    // Doujin-TH images (hosted on hentaithai.net) are blocked by Thai ISPs and Brave Shields;
+    // route through our Rust streaming proxy to guarantee 100% display without blocking!
+    return `/api/proxy-image?url=${encodeURIComponent(url)}&source=${source || 'doujinth'}`;
+}
+
 function renderMangaCards(items) {
     const grid = document.getElementById('mangaGrid');
     grid.innerHTML = items.map(item => {
@@ -403,13 +552,13 @@ function renderMangaCards(items) {
             : 'bg-amber-500/90 text-black';
         const sourceLabel = item.source === 'miku' ? 'Miku' : 'TH';
         
-        // Direct Lightning CDN load with no-referrer
-        const directThumb = item.thumbnail || 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="300" height="400" viewBox="0 0 300 400"><rect width="300" height="400" fill="%231a1b26"/><text x="50%" y="50%" fill="%23666" text-anchor="middle" font-family="sans-serif" font-size="16">ไม่มีรูปภาพ</text></svg>';
-        const directOverlay = item.thumbnail_overlay || null;
+        const directThumb = getImageUrl(item.thumbnail, item.source);
+        const directOverlay = item.thumbnail_overlay ? getImageUrl(item.thumbnail_overlay, item.source) : null;
 
         return `
-            <div onclick="openMangaDetail('${item.id}')" 
-                class="manga-card bg-wt-card border border-wt-border hover:border-sky-500/50 rounded-xl overflow-hidden cursor-pointer flex flex-col group relative">
+            <a href="/?source=${encodeURIComponent(item.source)}&manga=${encodeURIComponent(item.id)}" 
+                onclick="handleCardClick(event, '${escapeHtml(item.id)}', '${escapeHtml(item.source)}')" 
+                class="manga-card block bg-wt-card border border-wt-border hover:border-sky-500/50 rounded-xl overflow-hidden cursor-pointer flex flex-col group relative no-underline text-inherit">
                 
                 <!-- Poster Image Container -->
                 <div class="aspect-[3/4] w-full relative bg-gray-900 overflow-hidden">
@@ -427,7 +576,7 @@ function renderMangaCards(items) {
                              aria-hidden="true" 
                              referrerpolicy="no-referrer"
                              class="absolute inset-0 w-full h-full object-cover pointer-events-none transition-transform duration-300 group-hover:scale-105"
-                             onerror="if(!this.dataset.retried){ this.dataset.retried='1'; this.src='/api/proxy-image?url=' + encodeURIComponent('${directOverlay}') + '&source=${item.source}'; } else { this.style.display='none'; }">
+                             onerror="if(!this.dataset.retried){ this.dataset.retried='1'; this.src='/api/proxy-image?url=' + encodeURIComponent('${item.thumbnail_overlay}') + '&source=${item.source}'; } else { this.style.display='none'; }">
                     ` : ''}
 
                     <!-- Badges -->
@@ -460,7 +609,7 @@ function renderMangaCards(items) {
                     ` : ''}
                 </div>
 
-            </div>
+            </a>
         `;
     }).join('');
 }
@@ -540,10 +689,13 @@ function refreshCatalog() {
 // =========================================================
 // MANGA DETAIL MODAL
 // =========================================================
-async function openMangaDetail(id) {
+async function openMangaDetail(id, showModal = true) {
     const modal = document.getElementById('detailModal');
-    modal.classList.remove('hidden');
-    document.body.style.overflow = 'hidden';
+    if (showModal) {
+        modal.classList.remove('hidden');
+        document.body.style.overflow = 'hidden';
+        updateURL({ source: state.currentSource, manga: id });
+    }
 
     // Reset modal state
     document.getElementById('modalTitle').textContent = 'กำลังโหลดข้อมูล...';
@@ -559,11 +711,16 @@ async function openMangaDetail(id) {
         state.currentManga = data;
         state.chapters = data.chapters || [];
 
-        // Poster image with proxy
-        const proxiedCover = data.thumbnail 
-            ? `/api/proxy-image?url=${encodeURIComponent(data.thumbnail)}&source=${data.source}`
-            : '';
-        document.getElementById('modalCover').src = proxiedCover;
+        // Poster image
+        const coverImg = document.getElementById('modalCover');
+        coverImg.referrerPolicy = 'no-referrer';
+        coverImg.src = getImageUrl(data.thumbnail, data.source);
+        coverImg.onerror = () => {
+            if (!coverImg.dataset.retried && data.thumbnail) {
+                coverImg.dataset.retried = '1';
+                coverImg.src = `/api/proxy-image?url=${encodeURIComponent(data.thumbnail)}&source=${data.source}`;
+            }
+        };
         
         // Badge
         const badge = document.getElementById('modalSourceBadge');
@@ -613,11 +770,14 @@ function renderModalChapterList() {
         return;
     }
 
+    const mangaId = state.currentManga ? state.currentManga.id : '';
+
     listDiv.innerHTML = state.chapters.map((ch, idx) => {
         const isRead = state.readChapters.has(ch.id);
         return `
-            <div onclick="openChapterByIndex(${idx})" 
-                class="flex items-center justify-between p-2.5 rounded-xl bg-wt-dark hover:bg-wt-hover border border-wt-border cursor-pointer transition group">
+            <a href="/?source=${encodeURIComponent(state.currentSource)}&manga=${encodeURIComponent(mangaId)}&chapter=${encodeURIComponent(ch.id)}" 
+                onclick="handleChapterClick(event, ${idx})" 
+                class="flex items-center justify-between p-2.5 rounded-xl bg-wt-dark hover:bg-wt-hover border border-wt-border cursor-pointer transition group no-underline text-inherit block">
                 <div class="flex items-center gap-2 min-w-0">
                     <span class="w-6 h-6 rounded-lg bg-wt-card text-[11px] font-bold text-gray-400 group-hover:text-sky-400 flex items-center justify-center flex-shrink-0">
                         ${idx + 1}
@@ -634,7 +794,7 @@ function renderModalChapterList() {
                     ` : ''}
                     <i class="fa-solid fa-chevron-right text-[10px] text-gray-500 group-hover:text-sky-400 transition"></i>
                 </div>
-            </div>
+            </a>
         `;
     }).join('');
 }
@@ -643,6 +803,10 @@ function closeDetailModal() {
     const modal = document.getElementById('detailModal');
     modal.classList.add('hidden');
     document.body.style.overflow = '';
+    const readerView = document.getElementById('readerView');
+    if (!readerView || readerView.classList.contains('hidden')) {
+        updateURL({});
+    }
 }
 
 function startReadingFirstChapter() {
@@ -654,7 +818,7 @@ function startReadingFirstChapter() {
 // =========================================================
 // ZERO-SEAM CONTINUOUS READER ENGINE
 // =========================================================
-async function openChapterByIndex(index) {
+async function openChapterByIndex(index, forceReload = false) {
     if (!state.chapters || !state.chapters[index]) return;
     
     state.currentChapterIndex = index;
@@ -665,6 +829,10 @@ async function openChapterByIndex(index) {
     const readerView = document.getElementById('readerView');
     readerView.classList.remove('hidden');
     document.body.style.overflow = 'hidden';
+
+    // Synchronize current reading state into URL so F5/Reload stays in the reader!
+    const mangaId = state.currentManga ? state.currentManga.id : '';
+    updateURL({ source: state.currentSource, manga: mangaId, chapter: chapter.id });
 
     // Update titles in top bar
     document.getElementById('readerMangaTitle').textContent = state.currentManga ? state.currentManga.title : 'มังงะ';
@@ -701,7 +869,8 @@ async function openChapterByIndex(index) {
     }
 
     try {
-        const res = await fetch(`/api/${state.currentSource}/chapter/${chapter.id}`);
+        const url = `/api/${state.currentSource}/chapter/${chapter.id}${forceReload ? `?_t=${Date.now()}` : ''}`;
+        const res = await fetch(url);
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const data = await res.json();
         
@@ -713,6 +882,9 @@ async function openChapterByIndex(index) {
                 <div class="py-16 text-center text-gray-400">
                     <i class="fa-solid fa-triangle-exclamation text-3xl mb-2 text-amber-400"></i>
                     <p class="text-sm">ไม่พบรูปภาพในตอนนี้</p>
+                    <button onclick="reloadCurrentChapter()" class="mt-4 px-4 py-2 bg-wt-card hover:bg-wt-hover border border-wt-border rounded-xl text-xs text-white">
+                        <i class="fa-solid fa-rotate-right mr-1"></i> ลองโหลดใหม่อีกครั้ง
+                    </button>
                 </div>
             `;
             return;
@@ -727,8 +899,8 @@ async function openChapterByIndex(index) {
             <div class="py-16 text-center text-red-400">
                 <i class="fa-solid fa-circle-exclamation text-3xl mb-2"></i>
                 <p class="text-sm font-bold">โหลดภาพไม่สำเร็จ: ${err.message}</p>
-                <button onclick="openChapterByIndex(${index})" class="mt-3 px-4 py-2 bg-wt-card border border-wt-border rounded-xl text-xs text-white">
-                    ลองใหม่อีกครั้ง
+                <button onclick="reloadCurrentChapter()" class="mt-4 px-4 py-2 bg-wt-card hover:bg-wt-hover border border-wt-border rounded-xl text-xs text-white">
+                    <i class="fa-solid fa-rotate-right mr-1"></i> ลองโหลดใหม่อีกครั้ง
                 </button>
             </div>
         `;
@@ -752,19 +924,24 @@ function renderReaderImages(images) {
         wrapper.className = 'manga-page-wrapper';
         wrapper.dataset.page = i + 1;
 
+        const isDirect = (state.currentSource === 'miku' && !baseSrc.includes('hentaithai.net'));
+        const initialSrc = isDirect ? baseSrc : `/api/proxy-image?url=${encodeURIComponent(baseSrc)}&source=${state.currentSource}`;
+
         const img = document.createElement('img');
         img.className = 'manga-page-img';
         img.alt = `หน้า ${i + 1}`;
         img.loading = (i < 3) ? 'eager' : 'lazy';
         img.decoding = 'async'; // Non-blocking GPU image decoding
-        img.referrerPolicy = 'no-referrer'; // Ultra-fast direct CDN load
-        img.src = baseSrc;
+        img.referrerPolicy = 'no-referrer';
+        img.src = initialSrc;
 
         // Auto fallback to proxy if direct CDN ever fails
         img.onerror = () => {
             if (!img.dataset.retried) {
                 img.dataset.retried = '1';
-                img.src = `/api/proxy-image?url=${encodeURIComponent(baseSrc)}&source=${state.currentSource}`;
+                img.src = isDirect 
+                    ? `/api/proxy-image?url=${encodeURIComponent(baseSrc)}&source=${state.currentSource}`
+                    : baseSrc;
             }
         };
 
@@ -772,13 +949,16 @@ function renderReaderImages(images) {
 
         // If Thai translation overlay exists (Doujin-TH dual layer)
         if (overlaySrc) {
+            const isDirectOverlay = (state.currentSource === 'miku' && !overlaySrc.includes('hentaithai.net'));
+            const initialOverlay = isDirectOverlay ? overlaySrc : `/api/proxy-image?url=${encodeURIComponent(overlaySrc)}&source=${state.currentSource}`;
+
             const overlayImg = document.createElement('img');
             overlayImg.className = 'hc-layer';
             overlayImg.alt = '';
             overlayImg.referrerPolicy = 'no-referrer';
             overlayImg.loading = (i < 3) ? 'eager' : 'lazy';
             overlayImg.decoding = 'async';
-            overlayImg.src = overlaySrc;
+            overlayImg.src = initialOverlay;
             overlayImg.onerror = () => {
                 if (!overlayImg.dataset.retried) {
                     overlayImg.dataset.retried = '1';
@@ -894,6 +1074,9 @@ function exitReader() {
     readerView.classList.add('hidden');
     document.body.style.overflow = '';
     
+    // Clear URL parameters when exiting reader mode
+    updateURL({});
+
     // Refresh card checkmarks in catalog
     if (state.currentManga) {
         fetchCatalog(state.currentPage);
@@ -984,6 +1167,14 @@ function setupKeyboardListeners() {
 // =========================================================
 // CHAPTER SELECTION DRAWER
 // =========================================================
+function handleDrawerChapterClick(e, idx) {
+    if (e.metaKey || e.ctrlKey || e.shiftKey || e.which === 2) {
+        return; // Allow browser native open in new tab
+    }
+    e.preventDefault();
+    selectChapterFromDrawer(idx);
+}
+
 function openChapterDrawer() {
     const drawer = document.getElementById('chapterDrawer');
     drawer.classList.remove('hidden');
@@ -994,12 +1185,14 @@ function openChapterDrawer() {
         return;
     }
 
+    const mangaId = state.currentManga ? state.currentManga.id : '';
     listDiv.innerHTML = state.chapters.map((ch, idx) => {
         const isCurrent = idx === state.currentChapterIndex;
         const isRead = state.readChapters.has(ch.id);
         return `
-            <div onclick="selectChapterFromDrawer(${idx})" 
-                class="flex items-center justify-between p-2.5 rounded-xl border text-xs cursor-pointer transition ${
+            <a href="/?source=${encodeURIComponent(state.currentSource)}&manga=${encodeURIComponent(mangaId)}&chapter=${encodeURIComponent(ch.id)}" 
+                onclick="handleDrawerChapterClick(event, ${idx})" 
+                class="flex items-center justify-between p-2.5 rounded-xl border text-xs cursor-pointer transition no-underline text-inherit block ${
                     isCurrent 
                         ? 'bg-sky-500/20 border-sky-500/60 text-sky-400 font-bold' 
                         : 'bg-wt-dark hover:bg-wt-hover border-wt-border text-gray-300 font-semibold'
@@ -1009,7 +1202,7 @@ function openChapterDrawer() {
                     <span class="truncate">${escapeHtml(ch.title || `ตอนที่ ${idx + 1}`)}</span>
                 </div>
                 ${isRead ? '<i class="fa-solid fa-check text-emerald-400 text-[10px]"></i>' : ''}
-            </div>
+            </a>
         `;
     }).join('');
 }
@@ -1092,6 +1285,14 @@ function switchBookmarkTab(tab) {
     }
 }
 
+function handleSavedMangaClick(e, id, source) {
+    if (e.metaKey || e.ctrlKey || e.shiftKey || e.which === 2) {
+        return; // Allow browser native open in new tab
+    }
+    e.preventDefault();
+    openSavedManga(id, source);
+}
+
 function renderSavedItems(items, type) {
     const list = document.getElementById('bookmarksList');
     if (!items || items.length === 0) {
@@ -1106,8 +1307,10 @@ function renderSavedItems(items, type) {
 
     list.innerHTML = items.map((item, idx) => `
         <div class="flex items-center justify-between p-2 rounded-xl bg-wt-dark border border-wt-border hover:border-gray-600 transition">
-            <div onclick="openSavedManga('${item.id}', '${item.source}')" class="flex items-center gap-3 cursor-pointer min-w-0 flex-grow">
-                <img src="/api/proxy-image?url=${encodeURIComponent(item.thumbnail || '')}&source=${item.source}" 
+            <a href="/?source=${encodeURIComponent(item.source)}&manga=${encodeURIComponent(item.id)}" 
+               onclick="handleSavedMangaClick(event, '${escapeHtml(item.id)}', '${escapeHtml(item.source)}')" 
+               class="flex items-center gap-3 cursor-pointer min-w-0 flex-grow no-underline text-inherit">
+                <img src="${getImageUrl(item.thumbnail, item.source)}" 
                      class="w-10 h-14 object-cover rounded-lg bg-gray-800 flex-shrink-0" onerror="this.src='';">
                 <div class="min-w-0">
                     <h5 class="text-xs font-bold text-white truncate">${escapeHtml(item.title)}</h5>
@@ -1118,7 +1321,7 @@ function renderSavedItems(items, type) {
                         ${item.chapterTitle ? escapeHtml(item.chapterTitle) : ''}
                     </p>
                 </div>
-            </div>
+            </a>
             <button onclick="removeSavedItem('${item.id}', '${type}')" class="text-gray-500 hover:text-red-400 p-2 transition flex-shrink-0" title="ลบ">
                 <i class="fa-regular fa-trash-can text-xs"></i>
             </button>

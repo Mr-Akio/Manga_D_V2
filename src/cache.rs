@@ -28,3 +28,4 @@ pub async fn set_cached(key: &str, val: String) {
     }
     cache.insert(key.to_string(), (Instant::now(), val));
 }
+
